@@ -4,7 +4,10 @@ const mongoose = require("mongoose");
 
 require("dotenv").config();
 
-
+const os = require("os");
+const {
+    monitorEventLoopDelay
+} = require("perf_hooks");
 // =====================================================
 // EXPRESS APP
 // =====================================================
@@ -20,7 +23,188 @@ const PORT = process.env.PORT || 5000;
 
 app.use(cors());
 app.use(express.json());
+// =====================================================
+// REAL REQUEST LATENCY MONITOR
+// =====================================================
 
+app.use((req, res, next) => {
+
+    const start =
+        process.hrtime.bigint();
+
+    res.on("finish", () => {
+
+        const end =
+            process.hrtime.bigint();
+
+        const latencyMs =
+            Number(end - start) /
+            1_000_000;
+
+        latencySamples.push(
+            latencyMs
+        );
+
+        if (
+            latencySamples.length >
+            MAX_LATENCY_SAMPLES
+        ) {
+
+            latencySamples.shift();
+        }
+    });
+
+    next();
+});
+
+// =====================================================
+// P95 LATENCY
+// =====================================================
+
+function getAverageLatency() {
+
+    if (latencySamples.length === 0) {
+        return 0;
+    }
+
+    const total =
+        latencySamples.reduce(
+            (sum, value) =>
+                sum + value,
+            0
+        );
+
+    return total /
+        latencySamples.length;
+}
+
+function getP95Latency() {
+
+    if (latencySamples.length === 0) {
+        return 0;
+    }
+
+    const sorted =
+        [...latencySamples]
+            .sort((a, b) => a - b);
+
+    const index =
+        Math.ceil(
+            sorted.length * 0.95
+        ) - 1;
+
+    return sorted[
+        Math.max(0, index)
+    ];
+}
+
+// =====================================================
+// NODE.JS EVENT LOOP DELAY
+// =====================================================
+
+function getEventLoopDelayMs() {
+
+    const delay =
+        eventLoopMonitor.mean /
+        1e6;
+
+    eventLoopMonitor.reset();
+
+    if (!Number.isFinite(delay)) {
+        return 0;
+    }
+
+    return delay;
+}
+
+// =====================================================
+// NODE.JS EVENT LOOP DELAY
+// =====================================================
+
+function getEventLoopDelayMs() {
+
+    const delay =
+        eventLoopMonitor.mean /
+        1e6;
+
+    eventLoopMonitor.reset();
+
+    if (!Number.isFinite(delay)) {
+        return 0;
+    }
+
+    return delay;
+}
+
+// =====================================================
+// ADAPTIVE TRAFFIC GATE
+// =====================================================
+
+function adaptiveTrafficGate(
+    req,
+    res,
+    next
+) {
+
+    const currentSecond =
+        Math.floor(
+            Date.now() / 1000
+        );
+
+    // New second
+    if (
+        trafficCounter.second !==
+        currentSecond
+    ) {
+
+        trafficCounter = {
+
+            second: currentSecond,
+
+            count: 0
+        };
+    }
+
+    // Count every incoming request
+    trafficCounter.count++;
+
+    const currentLimit =
+        adaptiveTraffic.limitRPS;
+
+    // Reject when the server's
+    // current safe capacity is reached
+    if (
+        trafficCounter.count >
+        currentLimit
+    ) {
+
+        return res.status(429).json({
+
+            success: false,
+
+            blocked: true,
+
+            reason:
+                "SERVER_BACKPRESSURE",
+
+            performanceLevel:
+                adaptiveTraffic.level,
+
+            currentRPS:
+                trafficCounter.count,
+
+            allowedRPS:
+                currentLimit,
+
+            retryAfter: 1,
+
+            message:
+                "Server is currently under high traffic. Please retry shortly."
+        });
+    }
+
+    next();
+}
 
 // =====================================================
 // ENVIRONMENT CHECK
@@ -139,9 +323,15 @@ const bookingSchema = new mongoose.Schema(
         },
 
         amount: {
-            type: Number,
-            required: true
-        },
+    type: Number,
+    required: true
+},
+
+idempotencyKey: {
+    type: String,
+    unique: true,
+    sparse: true
+},
 
         status: {
             type: String,
@@ -220,7 +410,7 @@ const HOLD_DURATION = 5 * 60 * 1000;
 // =====================================================
 
 // Maximum users allowed inside the booking area
-const MAX_ACTIVE_USERS = 100;
+const MAX_ACTIVE_USERS = 10;
 
 // How many requests are allowed from one IP
 const MAX_REQUESTS_PER_MINUTE = 60;
@@ -230,7 +420,67 @@ const RATE_LIMIT_WINDOW = 60 * 1000;
 // =====================================================
 // HELPER FUNCTIONS
 // =====================================================
+// =====================================================
+// ADAPTIVE TRAFFIC GATE CONFIGURATION
+// =====================================================
 
+const MIN_TRAFFIC_RPS = 300;
+const START_TRAFFIC_RPS = 1000;
+const MAX_TRAFFIC_RPS = 3000;
+
+// Adaptive controller runs every second
+const ADAPTIVE_INTERVAL = 1000;
+
+// Increase/decrease speed
+const HEALTHY_INCREASE_FACTOR = 1.20;
+const MODERATE_INCREASE_FACTOR = 1.05;
+const HIGH_LOAD_DECREASE_FACTOR = 0.70;
+
+// =====================================================
+// ADAPTIVE TRAFFIC STATE
+// =====================================================
+
+let adaptiveTraffic = {
+    limitRPS: START_TRAFFIC_RPS,
+
+    currentRPS: 0,
+
+    cpuUsage: 0,
+
+    averageLatencyMs: 0,
+
+    p95LatencyMs: 0,
+
+    eventLoopDelayMs: 0,
+
+    level: "MEDIUM",
+
+    lastUpdated: Date.now()
+};
+
+// Requests arriving during the current second
+let trafficCounter = {
+    second: Math.floor(Date.now() / 1000),
+    count: 0
+};
+
+// Latency samples
+const latencySamples = [];
+
+const MAX_LATENCY_SAMPLES = 500;
+
+// Event loop monitor
+const eventLoopMonitor =
+    monitorEventLoopDelay({
+        resolution: 20
+    });
+
+eventLoopMonitor.enable();
+
+// Generate unique ID
+// =====================================================
+// HELPER FUNCTIONS
+// =====================================================
 
 // Generate unique ID
 
@@ -247,6 +497,224 @@ function generateId(prefix) {
     );
 
 }
+
+
+// =====================================================
+// REAL SYSTEM CPU USAGE
+// =====================================================
+
+let previousCpuSnapshot = null;
+
+function getCpuSnapshot() {
+
+    const cpus = os.cpus();
+
+    let idle = 0;
+    let total = 0;
+
+    for (const cpu of cpus) {
+
+        idle += cpu.times.idle;
+
+        total +=
+            cpu.times.user +
+            cpu.times.nice +
+            cpu.times.sys +
+            cpu.times.irq +
+            cpu.times.idle;
+    }
+
+    return {
+        idle,
+        total
+    };
+}
+
+function getSystemCpuUsage() {
+
+    const current =
+        getCpuSnapshot();
+
+    if (!previousCpuSnapshot) {
+
+        previousCpuSnapshot =
+            current;
+
+        return 0;
+    }
+
+    const idleDiff =
+        current.idle -
+        previousCpuSnapshot.idle;
+
+    const totalDiff =
+        current.total -
+        previousCpuSnapshot.total;
+
+    previousCpuSnapshot =
+        current;
+
+    if (totalDiff <= 0) {
+        return 0;
+    }
+
+    const usage =
+        (1 - idleDiff / totalDiff) * 100;
+
+    return Math.max(
+        0,
+        Math.min(100, usage)
+    );
+
+}
+// =====================================================
+// PERFORMANCE ANALYSER
+// =====================================================
+
+function analyseServerPerformance() {
+
+    const cpu =
+        getSystemCpuUsage();
+
+    const averageLatency =
+        getAverageLatency();
+
+    const p95Latency =
+        getP95Latency();
+
+    const eventLoopDelay =
+        getEventLoopDelayMs();
+
+    const currentRPS =
+        trafficCounter.count;
+
+    let level;
+
+    // HIGH LOAD
+    if (
+        cpu >= 80 ||
+        p95Latency >= 300 ||
+        eventLoopDelay >= 100
+    ) {
+
+        level = "HIGH";
+
+    }
+
+    // MEDIUM LOAD
+    else if (
+        cpu >= 55 ||
+        p95Latency >= 150 ||
+        eventLoopDelay >= 50
+    ) {
+
+        level = "MEDIUM";
+
+    }
+
+    // LOW LOAD
+    else {
+
+        level = "LOW";
+    }
+
+    let newLimit =
+        adaptiveTraffic.limitRPS;
+
+    // HEALTHY → increase
+    if (level === "LOW") {
+
+        newLimit =
+            newLimit *
+            HEALTHY_INCREASE_FACTOR;
+    }
+
+    // MEDIUM → slowly increase
+    else if (level === "MEDIUM") {
+
+        newLimit =
+            newLimit *
+            MODERATE_INCREASE_FACTOR;
+    }
+
+    // HIGH → decrease
+    else {
+
+        newLimit =
+            newLimit *
+            HIGH_LOAD_DECREASE_FACTOR;
+    }
+
+    // Keep between 300 and 3000
+    newLimit =
+        Math.max(
+            MIN_TRAFFIC_RPS,
+            Math.min(
+                MAX_TRAFFIC_RPS,
+                newLimit
+            )
+        );
+
+    adaptiveTraffic = {
+
+        limitRPS:
+            Math.round(newLimit),
+
+        currentRPS:
+            currentRPS,
+
+        cpuUsage:
+            Number(
+                cpu.toFixed(2)
+            ),
+
+        averageLatencyMs:
+            Number(
+                averageLatency.toFixed(2)
+            ),
+
+        p95LatencyMs:
+            Number(
+                p95Latency.toFixed(2)
+            ),
+
+        eventLoopDelayMs:
+            Number(
+                eventLoopDelay.toFixed(2)
+            ),
+
+        level,
+
+        lastUpdated:
+            Date.now()
+    };
+
+    // Reset request counter
+    trafficCounter = {
+
+        second:
+            Math.floor(
+                Date.now() / 1000
+            ),
+
+        count: 0
+    };
+
+    console.log(
+        `[ADAPTIVE] ` +
+        `CPU=${adaptiveTraffic.cpuUsage}% | ` +
+        `P95=${adaptiveTraffic.p95LatencyMs}ms | ` +
+        `Loop=${adaptiveTraffic.eventLoopDelayMs}ms | ` +
+        `RPS=${adaptiveTraffic.currentRPS} | ` +
+        `LIMIT=${adaptiveTraffic.limitRPS} | ` +
+        `LEVEL=${adaptiveTraffic.level}`
+    );
+}
+// Analyse performance every second
+setInterval(
+    analyseServerPerformance,
+    ADAPTIVE_INTERVAL
+);
 
 
 // =====================================================
@@ -779,6 +1247,7 @@ app.get(
 
 app.post(
     "/api/queue/join",
+    adaptiveTrafficGate,
     botProtection,
     (req, res) => {
 
@@ -1342,9 +1811,93 @@ app.post(
 
             const {
                 bookingId,
-                userId
+                userId,
+                idempotencyKey
             } = req.body;
 
+
+            // ==========================================
+            // VALIDATION
+            // ==========================================
+
+            if (
+                !bookingId ||
+                !userId ||
+                !idempotencyKey
+            ) {
+
+                return res.status(400).json({
+
+                    success: false,
+
+                    message:
+                        "bookingId, userId and idempotencyKey are required"
+
+                });
+
+            }
+
+
+            // ==========================================
+            // CHECK EXISTING IDEMPOTENT REQUEST
+            // ==========================================
+
+            const existingByKey =
+                await Booking.findOne({
+                    idempotencyKey
+                });
+
+
+            if (existingByKey) {
+
+                // Key belongs to another booking
+                if (
+                    existingByKey.bookingId !==
+                    bookingId
+                ) {
+
+                    return res.status(409).json({
+
+                        success: false,
+
+                        message:
+                            "This idempotency key is already associated with another booking."
+
+                    });
+
+                }
+
+
+                // Key already processed
+                if (
+                    existingByKey.status ===
+                    "CONFIRMED"
+                ) {
+
+                    return res.json({
+
+                        success: true,
+
+                        status: "CONFIRMED",
+
+                        bookingId:
+                            existingByKey.bookingId,
+
+                        idempotent: true,
+
+                        message:
+                            "Checkout already processed. Returning the existing confirmed booking."
+
+                    });
+
+                }
+
+            }
+
+
+            // ==========================================
+            // GET BOOKING
+            // ==========================================
 
             const booking =
                 await Booking.findOne({
@@ -1366,6 +1919,10 @@ app.post(
             }
 
 
+            // ==========================================
+            // USER VALIDATION
+            // ==========================================
+
             if (
                 booking.userId !==
                 userId
@@ -1383,7 +1940,56 @@ app.post(
             }
 
 
-            // Already expired
+            // ==========================================
+            // ALREADY CONFIRMED
+            // ==========================================
+
+            if (
+                booking.status ===
+                "CONFIRMED"
+            ) {
+
+                // If this request uses the same key,
+                // return the same booking.
+                if (
+                    booking.idempotencyKey ===
+                    idempotencyKey
+                ) {
+
+                    return res.json({
+
+                        success: true,
+
+                        status: "CONFIRMED",
+
+                        bookingId:
+                            booking.bookingId,
+
+                        idempotent: true,
+
+                        message:
+                            "Checkout already completed."
+
+                    });
+
+                }
+
+
+                return res.status(409).json({
+
+                    success: false,
+
+                    message:
+                        "This booking has already been confirmed."
+
+                });
+
+            }
+
+
+            // ==========================================
+            // MUST BE HELD
+            // ==========================================
 
             if (
                 booking.status !==
@@ -1402,7 +2008,12 @@ app.post(
             }
 
 
+            // ==========================================
+            // CHECK HOLD EXPIRY
+            // ==========================================
+
             if (
+                !booking.holdExpiresAt ||
                 new Date() >
                 booking.holdExpiresAt
             ) {
@@ -1424,24 +2035,112 @@ app.post(
             }
 
 
-            // For hackathon:
-            // simulate payment success
+            // ==========================================
+            // ATOMIC CHECKOUT
+            // ==========================================
+            //
+            // Only ONE concurrent request can change
+            // this booking from HELD → CONFIRMED.
+            //
+            // This is the important concurrency part.
+            // ==========================================
 
-            booking.status =
-                "CONFIRMED";
+            const confirmedBooking =
+                await Booking.findOneAndUpdate(
+
+                    {
+                        bookingId,
+
+                        userId,
+
+                        status: "HELD",
+
+                        holdExpiresAt: {
+                            $gt: new Date()
+                        }
+                    },
+
+                    {
+                        $set: {
+                            status: "CONFIRMED",
+
+                            holdExpiresAt:
+                                null,
+
+                            idempotencyKey
+                        }
+                    },
+
+                    {
+                        returnDocument: "after"
+                    }
+
+                );
 
 
-            booking.holdExpiresAt =
-                null;
+            // ==========================================
+            // RACE CONDITION / RETRY
+            // ==========================================
+
+            if (!confirmedBooking) {
+
+                const currentBooking =
+                    await Booking.findOne({
+                        bookingId
+                    });
 
 
-            await booking.save();
+                if (
+                    currentBooking &&
+                    currentBooking.status ===
+                        "CONFIRMED" &&
+                    currentBooking.idempotencyKey ===
+                        idempotencyKey
+                ) {
 
+                    return res.json({
+
+                        success: true,
+
+                        status: "CONFIRMED",
+
+                        bookingId:
+                            currentBooking.bookingId,
+
+                        idempotent: true,
+
+                        message:
+                            "Checkout already processed. Returning the existing booking."
+
+                    });
+
+                }
+
+
+                return res.status(409).json({
+
+                    success: false,
+
+                    message:
+                        "Checkout could not be completed because the booking state changed."
+
+                });
+
+            }
+
+
+            // ==========================================
+            // REMOVE TEMPORARY HOLD
+            // ==========================================
 
             ticketHolds.delete(
                 bookingId
             );
 
+
+            // ==========================================
+            // SUCCESS
+            // ==========================================
 
             res.json({
 
@@ -1450,7 +2149,17 @@ app.post(
                 status:
                     "CONFIRMED",
 
-                bookingId,
+                bookingId:
+                    confirmedBooking.bookingId,
+
+                amount:
+                    confirmedBooking.amount,
+
+                quantity:
+                    confirmedBooking.quantity,
+
+                idempotent:
+                    false,
 
                 message:
                     "Payment successful. Ticket confirmed."
@@ -1461,9 +2170,55 @@ app.post(
         } catch (error) {
 
             console.error(
-                "Checkout Error:",
+                "Idempotent Checkout Error:",
                 error
             );
+
+
+            // ==========================================
+            // UNIQUE KEY RACE
+            // ==========================================
+
+            if (
+                error.code === 11000
+            ) {
+
+                const existing =
+                    await Booking.findOne({
+                        idempotencyKey:
+                            req.body.idempotencyKey
+                    });
+
+
+                if (
+                    existing &&
+                    existing.bookingId ===
+                        req.body.bookingId &&
+                    existing.status ===
+                        "CONFIRMED"
+                ) {
+
+                    return res.json({
+
+                        success: true,
+
+                        status:
+                            "CONFIRMED",
+
+                        bookingId:
+                            existing.bookingId,
+
+                        idempotent:
+                            true,
+
+                        message:
+                            "Checkout already processed."
+
+                    });
+
+                }
+
+            }
 
 
             res.status(500).json({
@@ -1479,7 +2234,6 @@ app.post(
 
     }
 );
-
 
 // =====================================================
 // EXPIRE BOOKING

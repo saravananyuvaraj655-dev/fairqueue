@@ -218,150 +218,63 @@ export default function Checkout() {
     // CHECKOUT
     // ==========================================
 
-    const handleCheckout = async () => {
+   const handleCheckout = async () => {
 
-        try {
+    try {
 
-            setProcessing(true);
-
-            setError("");
-
-
-            const userId =
-                localStorage.getItem(
-                    "fairqueue_user_id"
-                );
-
-
-            if (!userId) {
-
-                setError(
-                    "User session not found."
-                );
-
-                return;
-
-            }
-
-
-            if (!bookingId) {
-
-                setError(
-                    "Booking ID is missing."
-                );
-
-                return;
-
-            }
-
-
-            if (
-                timeLeft <= 0
-            ) {
-
-                setError(
-                    "Your ticket hold has expired."
-                );
-
-                return;
-
-            }
-
-
-            console.log(
-                "Checkout request:",
-                {
-                    bookingId,
-                    userId
-                }
+        const userId =
+            localStorage.getItem(
+                "fairqueue_user_id"
             );
 
+        const storageKey =
+            `fairqueue_idempotency_${bookingId}`;
 
-            const response = await axios.post(
+        let idempotencyKey =
+            localStorage.getItem(storageKey);
+
+        if (!idempotencyKey) {
+
+            idempotencyKey =
+                "PAY_" +
+                Date.now() +
+                "_" +
+                Math.random()
+                    .toString(36)
+                    .substring(2, 10);
+
+            localStorage.setItem(
+                storageKey,
+                idempotencyKey
+            );
+        }
+
+        const response =
+            await axios.post(
                 "http://localhost:5000/api/booking/checkout",
                 {
                     bookingId,
-                    userId
+                    userId,
+                    idempotencyKey
                 }
             );
 
+        console.log(
+            "Checkout response:",
+            response.data
+        );
 
-            console.log(
-                "Checkout response:",
-                response.data
-            );
+        // continue with your existing success logic
 
+    } catch (error) {
 
-            if (
-                response.data.success
-            ) {
+        console.error(
+            "Checkout error:",
+            error
+        );
 
-                // Release queue session
-                try {
-
-                    await axios.post(
-                        "http://localhost:5000/api/queue/leave",
-                        {
-                            userId
-                        }
-                    );
-
-                } catch (releaseError) {
-
-                    console.warn(
-                        "Queue release warning:",
-                        releaseError
-                    );
-
-                }
-
-
-                // Save confirmed booking
-                localStorage.setItem(
-                    "fairqueue_confirmed_booking_id",
-                    bookingId
-                );
-
-
-                // Go to confirmation
-                router.push(
-                    `/user/confirmation?bookingId=${bookingId}`
-                );
-
-
-                return;
-
-            }
-
-
-            setError(
-                response.data.message ||
-                "Checkout failed."
-            );
-
-
-        } catch (error) {
-
-            console.error(
-                "Checkout Error:",
-                error
-            );
-
-
-            setError(
-                error.response?.data?.message ||
-                "Checkout failed."
-            );
-
-        } finally {
-
-            setProcessing(false);
-
-        }
-
-    };
-
-
+    }
+};
     // ==========================================
     // LOADING
     // ==========================================

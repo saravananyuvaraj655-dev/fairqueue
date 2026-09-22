@@ -136,8 +136,8 @@ export default function BookingPage() {
             if (response.data.active) {
 
                 router.push(
-                    `/user/booking/ticket-selection`
-                );
+    `/user/ticket-selection?eventId=${eventId}`
+);
 
                 return;
 
