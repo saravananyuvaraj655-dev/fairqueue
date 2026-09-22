@@ -263,7 +263,8 @@ export default function Checkout() {
             "Checkout response:",
             response.data
         );
-
+     router.push(
+        "/user/events");
         // continue with your existing success logic
 
     } catch (error) {
