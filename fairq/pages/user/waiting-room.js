@@ -36,7 +36,7 @@ export default function WaitingRoom() {
             try {
 
                 const response = await axios.get(
-                    `http://localhost:5000/api/queue/status/${userId}`
+                    `https://fairqueue-1.onrender.com/api/queue/status/${userId}`
                 );
 
                 console.log(

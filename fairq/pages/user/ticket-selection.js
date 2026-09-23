@@ -28,7 +28,7 @@ export default function TicketSelection() {
             try {
 
                 const response = await axios.get(
-                    `http://localhost:5000/api/events/${eventId}`
+                    `https://fairqueue-1.onrender.com/api/events/${eventId}`
                 );
 
                 if (!response.data.success) {
@@ -101,7 +101,7 @@ export default function TicketSelection() {
 
         const queueResponse =
             await axios.get(
-                `http://localhost:5000/api/queue/status/${userId}`
+                `https://fairqueue-1.onrender.com/api/queue/status/${userId}`
             );
 
         console.log(
@@ -161,7 +161,7 @@ export default function TicketSelection() {
 
 
         const response = await axios.post(
-            "http://localhost:5000/api/booking/hold",
+            "https://fairqueue-1.onrender.com/api/booking/hold",
             {
                 userId,
                 eventId,

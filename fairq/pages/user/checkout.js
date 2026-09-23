@@ -44,7 +44,7 @@ export default function Checkout() {
 
 
                 const response = await axios.get(
-                    `http://localhost:5000/api/booking/${bookingId}`
+                    `https://fairqueue-1.onrender.com/api/booking/${bookingId}`
                 );
 
 
@@ -251,7 +251,7 @@ export default function Checkout() {
 
         const response =
             await axios.post(
-                "http://localhost:5000/api/booking/checkout",
+                "https://fairqueue-1.onrender.com/api/booking/checkout",
                 {
                     bookingId,
                     userId,

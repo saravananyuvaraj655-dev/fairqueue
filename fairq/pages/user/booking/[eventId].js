@@ -27,7 +27,7 @@ export default function BookingPage() {
             try {
 
                 const response = await axios.get(
-                    `http://localhost:5000/api/events/${eventId}`
+                    ` https://fairqueue-1.onrender.com/api/events/${eventId}`
                 );
 
                 if (!response.data.success) {
@@ -96,7 +96,7 @@ export default function BookingPage() {
 
 
             const response = await axios.post(
-                "http://localhost:5000/api/queue/join",
+                "https://fairqueue-1.onrender.com/api/queue/join",
                 {
                     userId,
                     eventId
