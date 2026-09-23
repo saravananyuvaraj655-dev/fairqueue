@@ -2615,6 +2615,122 @@ app.delete(
     }
 );
 
+app.get(
+    "/api/admin/system-status",
+    (req, res) => {
+        res.json({
+            success: true,
+            system: {
+                status: "ONLINE",
+                activeUsers:
+                    activeUsers.size,
+                waitingUsers:
+                    waitingQueue.length,
+                activeHolds:
+                    ticketHolds.size,
+                maxActiveUsers,
+                admissionBatchSize,
+                admissionPaused,
+                botProtection:
+                    "ACTIVE",
+                oversellingProtection:
+                    "ACTIVE",
+                virtualQueue:
+                    "ACTIVE",
+                ticketHold:
+                    "ACTIVE",
+                adaptiveTraffic:
+                    "ACTIVE",
+                performanceLevel:
+                    adaptiveTraffic.level,
+                currentTrafficRPS:
+                    adaptiveTraffic.currentRPS,
+                currentTrafficLimitRPS:
+                    adaptiveTraffic.limitRPS
+            }
+        });
+    }
+);
+
+app.get(
+    "/api/admin/queue",
+    (req, res) => {
+        res.json({
+            success: true,
+
+            queue: waitingQueue,
+
+            activeUsers:
+                Array.from(
+                    activeUsers.entries()
+                ).map(
+                    ([userId, data]) => ({
+                        userId,
+                        ...data
+                    })
+                )
+        });
+    }
+);
+
+app.get(
+    "/api/admin/performance",
+    (req, res) => {
+        res.json({
+            success: true,
+
+            performance: {
+                ...adaptiveTraffic,
+
+                queueSize:
+                    waitingQueue.length,
+
+                activeUsers:
+                    activeUsers.size,
+
+                maxActiveUsers
+            }
+        });
+    }
+);
+
+app.post(
+    "/api/admin/admission/pause",
+    (req, res) => {
+        admissionPaused = true;
+
+        res.json({
+            success: true,
+            paused: true,
+            message:
+                "Queue admission paused."
+        });
+    }
+);
+
+app.post(
+    "/api/admin/admission/process",
+    (req, res) => {
+        if (admissionPaused) {
+            return res.status(409).json({
+                success: false,
+                message:
+                    "Admission is currently paused."
+            });
+        }
+
+        processWaitingQueue();
+
+        res.json({
+            success: true,
+            activeUsers:
+                activeUsers.size,
+            waitingUsers:
+                waitingQueue.length
+        });
+    }
+);
+
 
 // =====================================================
 // START SERVER
