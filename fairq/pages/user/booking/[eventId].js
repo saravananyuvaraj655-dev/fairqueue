@@ -60,117 +60,84 @@ export default function BookingPage() {
     // ==========================================
 
     const joinQueue = async () => {
+    try {
+        setJoining(true);
+        setError("");
 
-        try {
+        // Create user ID only once
+        let userId = localStorage.getItem(
+            "fairqueue_user_id"
+        );
 
-            setJoining(true);
-            setError("");
+        if (!userId) {
+            userId =
+                "USER_" +
+                Date.now() +
+                "_" +
+                Math.random()
+                    .toString(36)
+                    .substring(2, 8);
 
-            // Create user ID only once
-            let userId = localStorage.getItem(
-                "fairqueue_user_id"
-            );
-
-            if (!userId) {
-
-                userId =
-                    "USER_" +
-                    Date.now() +
-                    "_" +
-                    Math.random()
-                        .toString(36)
-                        .substring(2, 8);
-
-                localStorage.setItem(
-                    "fairqueue_user_id",
-                    userId
-                );
-
-            }
-
-            // Remember selected event
             localStorage.setItem(
-                "fairqueue_event_id",
-                eventId
+                "fairqueue_user_id",
+                userId
             );
-
-
-            const response = await axios.post(
-                "https://fairqueue-1.onrender.com/api/queue/join",
-                {
-                    userId,
-                    eventId
-                }
-            );
-
-
-            console.log(
-                "Queue response:",
-                response.data
-            );
-
-
-            // ==================================
-            // BOT / RATE LIMIT
-            // ==================================
-
-            if (
-                response.status === 429 ||
-                response.data.blocked
-            ) {
-
-                setError(
-                    response.data.message ||
-                    "Too many requests."
-                );
-
-                return;
-
-            }
-
-
-            // ==================================
-            // ALREADY ACTIVE
-            // ==================================
-
-            if (response.data.active) {
-
-                router.push(
-    `/user/ticket-selection?eventId=${eventId}`
-);
-
-                return;
-
-            }
-
-
-            // ==================================
-            // ENTER WAITING ROOM
-            // ==================================
-
-            router.push(
-                `/user/waiting-room?eventId=${eventId}`
-            );
-
-        } catch (error) {
-
-            console.error(
-                "Queue Join Error:",
-                error
-            );
-
-            setError(
-                error.response?.data?.message ||
-                "Unable to join FairQueue."
-            );
-
-        } finally {
-
-            setJoining(false);
-
         }
 
-    };
+        // Remember selected event
+        localStorage.setItem(
+            "fairqueue_event_id",
+            eventId
+        );
+
+        const response = await axios.post(
+            "https://fairqueue-1.onrender.com/api/queue/join",
+            {
+                userId,
+                eventId
+            }
+        );
+
+        console.log(
+            "Queue response:",
+            response.data
+        );
+
+        // ==================================
+        // RATE LIMIT / SERVER BACKPRESSURE
+        // ==================================
+
+        if (response.status === 429) {
+            setError(
+                response.data.message ||
+                "Too many requests. Please wait."
+            );
+
+            return;
+        }
+
+        // ==================================
+        // ALWAYS GO TO WAITING ROOM
+        // ==================================
+
+        router.push(
+            `/user/waiting-room?eventId=${eventId}`
+        );
+
+    } catch (error) {
+        console.error(
+            "Queue Join Error:",
+            error
+        );
+
+        setError(
+            error.response?.data?.message ||
+            "Unable to join FairQueue."
+        );
+    } finally {
+        setJoining(false);
+    }
+};
 
 
     // ==========================================
