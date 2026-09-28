@@ -58,7 +58,6 @@ export default function BookingPage() {
     // ==========================================
     // JOIN FAIRQUEUE
     // ==========================================
-
     const joinQueue = async () => {
     try {
         setJoining(true);
